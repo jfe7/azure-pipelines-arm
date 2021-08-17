@@ -1,0 +1,150 @@
+
+#
+#.INFORMATION
+#
+#    Name:            ARM-Stages-Template.yml
+#
+#    Description:     Multi Stage YAML Pipeline to Deploy ARM Template Continuously. 
+#
+#    Author:          James Ferrari
+#
+#    Version:         1.0
+#
+#    Date:            01/01/2021    
+#
+#.CHANGE LOG
+#
+#    Version 1.0      01/01/2021      First Release
+#
+
+
+##################################################################################
+# Runtime Parameters. ############################################################
+##################################################################################
+
+parameters:
+  - name: ResourceGroupName
+    type: string
+
+  - name: AzureLocation
+    type: string
+    values:
+      - uksouth
+      - ukwest
+    
+  - name: Environment
+    type: string
+    values:
+      - Dev
+      - UAT
+      - Prod
+
+##################################################################################
+# Validate ARM Template Stages. ##################################################
+##################################################################################
+
+stages:
+  - stage: 'Validate_ARM_${{ parameters.environment }}'
+    displayName: 'Validate ARM ${{ parameters.environment }}'
+    jobs:
+      - job: 'Validate_ARM_Template_${{ parameters.environment }}'
+        displayName: 'Validate ARM Template ${{ parameters.environment }}'
+        pool:
+          vmImage: 'windows-latest'
+        steps:
+
+          # ----------------------------------------------------------------------------------
+          # Check Resource Group Exists for ARM Deployment, Create If Not. -------------------
+          - task: AzurePowerShell@5
+            displayName: Validate Resource Group
+            inputs:
+              azureSubscription: JF Dev Subscription
+              azurePowerShellVersion: LatestVersion
+              ScriptType: InlineScript
+              Inline: |
+                  $ResourceGroupExists =  Get-AzResourceGroup -Name ${{ parameters.ResourceGroupName }} `
+                                          -Location ${{ parameters.AzureLocation }} `
+                                          -ErrorAction 'SilentlyContinue'
+                  
+                  if (!($ResourceGroupExists)) {
+                    Write-Host ""
+                    Write-Host "##[warning]Resource Group '${{ parameters.ResourceGroupName }}' Does Not Exist, Creating..."
+
+                    New-AzResourceGroup -Name ${{ parameters.ResourceGroupName }} -Location ${{ parameters.AzureLocation }} -ErrorAction Stop
+
+                    Write-Host "##[section]Resource Group '${{ parameters.ResourceGroupName }}' Created!"
+                  }
+
+                  else {
+                    Write-Host ""
+                    Write-Host "##[section]Resource Group '${{ parameters.ResourceGroupName }}' Does Exist, Continuing with Build..."
+                  }
+
+          # ----------------------------------------------------------------------------------
+          # Validate ARM Deployment is Correct, Show WhatIf Results. -------------------------
+          - task: AzurePowerShell@5
+            displayName: Validate ARM Deployment
+            inputs:
+              azureSubscription: JF Dev Subscription
+              azurePowerShellVersion: LatestVersion
+              ScriptType: FilePath
+              ScriptPath: webAppLinux/pipeline/Deploy-AzTemplate.ps1
+              ScriptArguments: -DeployOrTest 'Test' -ResourceGroupName ${{ parameters.ResourceGroupName }} -Location ${{ parameters.AzureLocation }} -Environment ${{ parameters.environment }}
+
+          # ----------------------------------------------------------------------------------
+          # Archive ARM Template Directory. --------------------------------------------------
+          - task: ArchiveFiles@2
+            displayName: 'Archive ARM Files'
+            inputs:
+              rootFolderOrFile: webAppLinux
+              archiveType: zip
+              archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId)-webAppLinux.zip'
+
+          # ----------------------------------------------------------------------------------
+          # Publish Archive as Artifact to Use in Deployment. --------------------------------
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish ARM Archive'
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId)-webAppLinux.zip'
+              publishLocation: pipeline
+              artifact: '$(Build.BuildId)-${{ parameters.environment }}-webAppLinux'
+
+
+##################################################################################
+# Deploy ARM Template Stages. ####################################################
+##################################################################################
+
+  - stage: 'Deploy_ARM_${{ parameters.environment }}'
+    displayName: 'Deploy ARM ${{ parameters.environment }}'
+    jobs:
+      - deployment: 'Deploy_ARM_Template_${{ parameters.environment }}'
+        displayName: 'Deploy ARM Template ${{ parameters.environment }}'
+        pool:
+          vmImage: 'windows-latest'
+        continueOnError: false
+        environment: ${{ parameters.environment }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+
+                # ----------------------------------------------------------------------------------
+                # Extract Artifact. ----------------------------------------------------------------
+                - task: ExtractFiles@1
+                  displayName: 'Extract ARM Artifact'
+                  inputs:
+                    archiveFilePatterns: '$(Pipeline.Workspace)/$(Build.BuildId)-${{ parameters.environment }}-webAppLinux/$(Build.BuildId)-webAppLinux.zip'
+                    destinationFolder: '$(System.DefaultWorkingDirectory)/$(Build.BuildId)/'
+                    cleanDestinationFolder: false
+                    overwriteExistingFiles: true
+
+                # ----------------------------------------------------------------------------------
+                # Deploy ARM Template. -------------------------------------------------------------
+                - task: AzurePowerShell@5
+                  displayName: Deploy ARM Template
+                  inputs:
+                    azureSubscription: JF Dev Subscription
+                    azurePowerShellVersion: LatestVersion
+                    ScriptType: FilePath
+                    ScriptPath: '$(System.DefaultWorkingDirectory)/$(Build.BuildId)/webAppLinux/pipeline/Deploy-AzTemplate.ps1'
+                    ScriptArguments: -DeployOrTest 'Deploy' -ResourceGroupName ${{ parameters.ResourceGroupName }} -Location ${{ parameters.AzureLocation }} -Environment ${{ parameters.environment }}

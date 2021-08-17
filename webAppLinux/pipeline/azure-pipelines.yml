@@ -1,0 +1,29 @@
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - 'webAppLinux' 
+    exclude:
+    - 'webAppLinux/pipeline'
+
+stages:
+
+- template: arm-stages-template.yml
+  parameters:
+    resourcegroupname: jf-dev-uksouth-rg
+    AzureLocation: uksouth
+    environment: Dev
+
+- template: arm-stages-template.yml
+  parameters:
+    resourcegroupname: jf-uat-uksouth-rg
+    AzureLocation: uksouth
+    environment: UAT
+
+- template: arm-stages-template.yml
+  parameters:
+    resourcegroupname: jf-prod-uksouth-rg
+    AzureLocation: uksouth
+    environment: Prod
