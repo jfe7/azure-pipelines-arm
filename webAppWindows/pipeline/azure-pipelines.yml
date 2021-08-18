@@ -1,0 +1,176 @@
+#
+#.INFORMATION
+#
+#    Name:            azure-pipelines.yml
+#
+#    Description:     Multi Stage YAML Pipeline To Deploy Web App with ARM Templates.
+#
+#    Author:          James Ferrari
+#
+#    Version:         1.0
+#
+#    Date:            01/01/2021    
+#
+#.CHANGE LOG
+#
+#    Version 1.0      01/01/2021      First Release
+#
+
+##################################################################################
+# Runtime Parameters. ############################################################
+# These Will Be Used as ARM Template Parameters. #################################
+##################################################################################
+
+trigger: none
+    
+parameters:
+  - name: ResourceGroupName
+    type: string
+
+  - name: AzureLocation
+    type: string
+    default: uksouth
+    values:
+      - uksouth
+      - ukwest
+
+  ####################################################
+  # ARM Template Parameters.
+  # Refer To WebAppWindows.json for help if required.
+
+  - name: clientNumber
+    type: string
+    
+  - name: appServicePlanSKU
+    type: string
+    default: P1V2
+
+  - name: appServicePlanCapacity
+    type: number
+    default: 1
+
+variables:
+- name: clientNumber
+  value: ${{ lower(parameters.clientNumber) }}
+
+##################################################################################
+# Validate ARM Template Stages. ##################################################
+##################################################################################
+
+stages:
+  - stage: 'Validate_ARM_${{ parameters.clientNumber }}'
+    displayName: 'Validate ARM ${{ upper(parameters.clientNumber) }}'
+    jobs:
+      - job: 'Validate_ARM_Template_${{ parameters.clientNumber }}'
+        displayName: 'Validate ARM Template ${{ upper(parameters.clientNumber) }}'
+        pool:
+          vmImage: 'windows-latest'
+        steps:
+
+          # ----------------------------------------------------------------------------------
+          # Check Resource Group Exists for ARM Deployment, Create If Not. -------------------
+          - task: AzurePowerShell@5
+            displayName: Validate Resource Group
+            inputs:
+              azureSubscription: JF Dev Subscription
+              azurePowerShellVersion: LatestVersion
+              ScriptType: InlineScript
+              Inline: |
+                  $ResourceGroupExists =  Get-AzResourceGroup -Name ${{ parameters.ResourceGroupName }} `
+                                          -Location ${{ parameters.AzureLocation }} `
+                                          -ErrorAction 'SilentlyContinue'
+                  
+                  if (!($ResourceGroupExists)) {
+                    Write-Host ""
+                    Write-Host "##[warning]Resource Group '${{ parameters.ResourceGroupName }}' Does Not Exist, Creating..."
+
+                    New-AzResourceGroup -Name ${{ parameters.ResourceGroupName }} -Location ${{ parameters.AzureLocation }} -ErrorAction Stop
+
+                    Write-Host "##[section]Resource Group '${{ parameters.ResourceGroupName }}' Created!"
+                  }
+
+                  else {
+                    Write-Host ""
+                    Write-Host "##[section]Resource Group '${{ parameters.ResourceGroupName }}' Does Exist, Continuing with Build..."
+                  }
+
+          # ----------------------------------------------------------------------------------
+          # Check Resource Group Exists for ARM Deployment, Create If Not. -------------------
+          - task: AzurePowerShell@5
+            displayName: Validate ARM Template
+            inputs:
+              azureSubscription: JF Dev Subscription
+              azurePowerShellVersion: LatestVersion
+              ScriptType: InlineScript
+              Inline: |
+                $deploymentParameters = @{
+                  clientNumber = "$(clientNumber)"
+                  appServicePlanSKU = "${{ parameters.appServicePlanSku }}"
+                  appServicePlanCapacity = ${{ parameters.appServicePlanCapacity }} 
+                }
+
+                $deploymentParameters
+                
+                New-AzResourceGroupDeployment -ResourceGroupName ${{ parameters.ResourceGroupName }} `
+                    -TemplateFile 'webAppWindows\webAppWindows.json' `
+                    -TemplateParameterObject $deploymentParameters `
+                    -WhatIf `
+                    -Verbose 
+
+          # ----------------------------------------------------------------------------------
+          # Archive ARM Template Directory. --------------------------------------------------
+          - task: ArchiveFiles@2
+            displayName: 'Archive ARM Files'
+            inputs:
+              rootFolderOrFile: webAppWindows
+              archiveType: zip
+              archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId)-webAppWindows.zip'
+
+          # ----------------------------------------------------------------------------------
+          # Publish Archive as Artifact to Use in Deployment. --------------------------------
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish ARM Archive'
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId)-webAppWindows.zip'
+              publishLocation: pipeline
+              artifact: '$(Build.BuildId)-${{ parameters.clientNumber }}-webAppWindows'
+
+
+##################################################################################
+# Deploy ARM Template Stages. ####################################################
+##################################################################################
+
+  - stage: 'Deploy_ARM_${{ parameters.clientNumber }}'
+    displayName: 'Deploy ARM ${{ upper(parameters.clientNumber) }}'
+    jobs:
+      - deployment: 'Deploy_ARM_Template_${{ parameters.clientNumber }}'
+        displayName: 'Deploy ARM Template ${{ upper(parameters.clientNumber) }}'
+        pool:
+          vmImage: 'windows-latest'
+        continueOnError: false
+        environment: ${{ parameters.clientNumber }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+
+                # ----------------------------------------------------------------------------------
+                # Extract Artifact. ----------------------------------------------------------------
+                - task: ExtractFiles@1
+                  displayName: 'Extract ARM Artifact'
+                  inputs:
+                    archiveFilePatterns: '$(Pipeline.Workspace)/$(Build.BuildId)-${{ parameters.clientNumber }}-webAppWindows/$(Build.BuildId)-webAppWindows.zip'
+                    destinationFolder: '$(System.DefaultWorkingDirectory)/$(Build.BuildId)/'
+                    cleanDestinationFolder: false
+                    overwriteExistingFiles: true
+
+                # ----------------------------------------------------------------------------------
+                # Deploy ARM Template. -------------------------------------------------------------
+                - task: AzureResourceManagerTemplateDeployment@3
+                  displayName: Deploy ARM Template
+                  inputs:
+                    azureResourceManagerConnection: JF Dev Subscription
+                    resourceGroupName: ${{ parameters.ResourceGroupName }}
+                    location: ${{ parameters.AzureLocation }}
+                    csmFile: $(System.DefaultWorkingDirectory)/$(Build.BuildId)/webAppWindows/webAppWindows.json
+                    overrideParameters: '-clientNumber ${{ parameters.clientNumber }} -appServicePlanSKU ${{ parameters.appServicePlanSku }} -appServicePlanCapacity ${{ parameters.appServicePlanCapacity }}'

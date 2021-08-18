@@ -1,0 +1,128 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "clientNumber": {
+            "type": "string",
+            "metadata": {
+                "description": "client number for example, c01, c02, c03 ..."
+            }
+        },
+        "appServicePlanSKU": {
+            "type": "string",
+            "defaultValue": "P1V2",
+            "metadata": {
+                "description": "SKU For App Service Plan"
+            }
+        },
+        "appServicePlanCapacity": {
+            "type": "int",
+            "defaultValue": 1,
+            "metadata": {
+                "description": "App Service Plan Capacity"
+            }
+        }
+    },
+    "functions": [],
+    "variables": {
+        "vnetName": "[concat('jf-', tolower(parameters('clientNumber')), '-uksouth-vnet')]",
+        "appServicePlanName": "[concat('jf-', tolower(parameters('clientNumber')), '-uksouth-plan')]",
+        "appServiceName": "[concat('jf-', tolower(parameters('clientNumber')), '-uksouth-ase')]",
+        "storageAccountName": "[concat('jf', tolower(parameters('clientNumber')), 'uksouthst')]"
+    },
+    "resources": [
+        {
+            "name": "[variables('vnetName')]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2019-11-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "10.0.1.0/24"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "WindowsAppServiceSubnet",
+                        "properties": {
+                            "addressPrefix": "10.0.1.0/28",
+                            "serviceEndpoints": [
+                                {
+                                    "service": "Microsoft.Storage"
+                                }
+                            ],
+                            "delegations": [
+                                {
+                                    "name": "delegation",
+                                    "properties": {
+                                        "serviceName": "Microsoft.Web/serverFarms"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "[variables('appServicePlanName')]",
+            "type": "Microsoft.Web/serverfarms",
+            "apiVersion": "2020-06-01",
+            "location": "[resourceGroup().location]",
+            "sku": {
+                "name": "[parameters('appServicePlanSKU')]",
+                "capacity": "[parameters('appServicePlanCapacity')]"
+            },
+            "kind": "windows",
+            "properties": {
+            }
+        },
+        {
+            "name": "[variables('appServiceName')]",
+            "type": "Microsoft.Web/sites",
+            "apiVersion": "2020-12-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+                "virtualNetworkSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets',variables('vnetName'),'WindowsAppServiceSubnet')]",
+                "httpsOnly" : true,
+                "siteConfig": {
+                    "vnetRouteAllEnabled" : true,
+                    "ftpsState" : "Disabled"
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+                "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+            ]
+        },
+        {
+            "name": "[variables('storageAccountName')]",
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2019-06-01",
+            "location": "[resourceGroup().location]",
+            "kind": "StorageV2",
+            "sku": {
+                "name": "Standard_LRS"
+            },
+            "properties": {
+                "allowBlobPublicAccess": false,
+                "minimumTlsVersion": "TLS1_2",
+                "networkAcls": {
+                    "bypass": "AzureServices",
+                    "defaultAction": "Deny",
+                    "virtualNetworkRules": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets',variables('vnetName'),'WindowsAppServiceSubnet')]"
+                        }
+                    ]
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+            ]
+        }
+    ],
+    "outputs": {}
+}
