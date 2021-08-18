@@ -5,8 +5,9 @@ This Repository can be used as a starter pack for deploying resources in Azure u
 [/webAppLinux](https://github.com/jfe7/azure-pipelines-arm/tree/main/webAppLinux/) - Deploys a Linux Web App across multiple environments using a multi stage YAML Pipeline & ARM Parameter Files. 
 
 ![alt text](misc/images/arm-multi-stage-env.png)
-
-[/webAppWindows](https://github.com/jfe7/azure-pipelines-arm/tree/main/webAppWindows/) - Deploys a Windows Web App using a multi stage YAML Pipeline & Parameters set from users at  Pipeline runtime.
+<br />
+<br />
+[/webAppWindows](https://github.com/jfe7/azure-pipelines-arm/tree/main/webAppWindows/) - Deploys a Windows Web App using a multi stage YAML Pipeline & Parameters set from users at  Pipeline runtime. Best used when deployments are similar, but not part of the same lifecycle, for example, deploying a WebApp for different customers.
 
 ![alt text](misc/images/arm-multi-stage.png)
 
